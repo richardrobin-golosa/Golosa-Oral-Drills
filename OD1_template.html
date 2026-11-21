@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oral Drill 1 — Author Sandbox</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 640px;
+      margin: 3rem auto;
+      padding: 0 1.25rem;
+      line-height: 1.5;
+      color: #1f2937;
+    }
+    .card {
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      padding: 1.5rem;
+      background: #f9fafb;
+    }
+    .controls-panel {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+      margin: 1rem 0 1.25rem 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    label {
+      font-size: 0.95rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    input[type="checkbox"] {
+      width: 1.05rem;
+      height: 1.05rem;
+      vertical-align: middle;
+      margin-right: 0.45rem;
+      cursor: pointer;
+    }
+    input[type="range"] {
+      width: 180px;
+      cursor: pointer;
+    }
+    .scale-readout {
+      font-variant-numeric: tabular-nums;
+      font-size: 0.9rem;
+      color: #374151;
+    }
+    button {
+      font-size: 1rem;
+      padding: 0.65rem 1.25rem;
+      border-radius: 8px;
+      border: none;
+      background: #1d4ed8;
+      color: #fff;
+      cursor: pointer;
+      margin-right: 0.5rem;
+    }
+    button:hover { background: #1e40af; }
+    button.secondary {
+      background: #4b5563;
+    }
+    button.secondary:hover { background: #374151; }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    #status {
+      margin-top: 1rem;
+      font-weight: 600;
+      color: #111827;
+    }
+    #detail {
+      margin-top: 0.35rem;
+      font-size: 0.92rem;
+      color: #4b5563;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Oral Drill 1</h1>
+    <p>Author review player: test track order and pause timing.</p>
+
+    <div class="controls-panel">
+      <div class="control-row">
+        <label for="randomizeChk">
+          <input type="checkbox" id="randomizeChk" checked />
+          Randomize prompt/response pairs
+        </label>
+      </div>
+
+      <div class="control-row">
+        <label for="pauseScale">Pause scale:</label>
+        <div>
+          <input type="range" id="pauseScale" min="0.5" max="2.0" step="0.1" value="1.0" />
+          <span id="scaleLabel" class="scale-readout">1.0x (1.5s / 1.0s)</span>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <button id="startBtn">Start Drill</button>
+      <button id="stopBtn" class="secondary" disabled>Stop</button>
+    </div>
+
+    <div id="status">Ready</div>
+    <div id="detail">Track 1 plays first; tracks 2–15 follow according to settings above.</div>
+  </div>
+
+  <script>
+    // Keep these two declarations in this exact format for bundle_drill.py
+    const SLUG_FILE = "6e-Bk1-U1-OD1_Marker 01.mp3";
+
+    const PAIRS = [
+      { prompt: "6e-Bk1-U1-OD1_Marker 02.mp3", response: "6e-Bk1-U1-OD1_Marker 03.mp3", pauseAfterPromptMs: 1500 },
+      { prompt: "6e-Bk1-U1-OD1_Marker 04.mp3", response: "6e-Bk1-U1-OD1_Marker 05.mp3", pauseAfterPromptMs: 1500 },
+      { prompt: "6e-Bk1-U1-OD1_Marker 06.mp3", response: "6e-Bk1-U1-OD1_Marker 07.mp3", pauseAfterPromptMs: 1500 },
+      { prompt: "6e-Bk1-U1-OD1_Marker 08.mp3", response: "6e-Bk1-U1-OD1_Marker 09.mp3", pauseAfterPromptMs: 1500 },
+      { prompt: "6e-Bk1-U1-OD1_Marker 10.mp3", response: "6e-Bk1-U1-OD1_Marker 11.mp3", pauseAfterPromptMs: 1500 },
+      { prompt: "6e-Bk1-U1-OD1_Marker 12.mp3", response: "6e-Bk1-U1-OD1_Marker 13.mp3", pauseAfterPromptMs: 1500 },
+      { prompt: "6e-Bk1-U1-OD1_Marker 14.mp3", response: "6e-Bk1-U1-OD1_Marker 15.mp3", pauseAfterPromptMs: 1500 }
+    ];
+
+    const BASE_PAUSE_AFTER_RESPONSE_MS = 1000;
+
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const randomizeChk = document.getElementById("randomizeChk");
+    const pauseScaleInput = document.getElementById("pauseScale");
+    const scaleLabel = document.getElementById("scaleLabel");
+    const statusEl = document.getElementById("status");
+    const detailEl = document.getElementById("detail");
+
+    let currentAudio = null;
+    let timerId = null;
+    let runId = 0;
+
+    function getScale() {
+      return parseFloat(pauseScaleInput.value) || 1.0;
+    }
+
+    function updateScaleReadout() {
+      const scale = getScale();
+      const promptSec = ((1500 * scale) / 1000).toFixed(2).replace(/\.00$/, ".0");
+      const respSec = ((BASE_PAUSE_AFTER_RESPONSE_MS * scale) / 1000).toFixed(2).replace(/\.00$/, ".0");
+      scaleLabel.textContent = `${scale.toFixed(1)}x (${promptSec}s / ${respSec}s)`;
+    }
+
+    pauseScaleInput.addEventListener("input", updateScaleReadout);
+    updateScaleReadout();
+
+    function shuffleArray(items) {
+      const copy = items.slice();
+      for (let i = copy.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [copy[i], copy[j]] = [copy[j], copy[i]];
+      }
+      return copy;
+    }
+
+    function sleep(ms, activeRunId) {
+      return new Promise((resolve, reject) => {
+        timerId = setTimeout(() => {
+          if (activeRunId !== runId) return reject(new Error("cancelled"));
+          resolve();
+        }, ms);
+      });
+    }
+
+    function playFile(src, activeRunId) {
+      return new Promise((resolve, reject) => {
+        if (activeRunId !== runId) return reject(new Error("cancelled"));
+
+        const audio = new Audio(src);
+        currentAudio = audio;
+
+        audio.onended = () => {
+          if (activeRunId !== runId) return reject(new Error("cancelled"));
+          resolve();
+        };
+
+        audio.onerror = () => {
+          if (activeRunId !== runId) return reject(new Error("cancelled"));
+          reject(new Error("Could not load audio file."));
+        };
+
+        audio.play().catch((err) => {
+          if (activeRunId !== runId) return reject(new Error("cancelled"));
+          reject(err);
+        });
+      });
+    }
+
+    function stopPlayback() {
+      runId += 1;
+      if (timerId) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+        currentAudio = null;
+      }
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    }
+
+    async function runDrill() {
+      stopPlayback();
+      const activeRunId = runId;
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+
+      const isRandomized = randomizeChk.checked;
+
+      try {
+        // Step 1: Always play Track 1 (Slug) first
+        statusEl.textContent = "Playing instructions (Track 1)...";
+        detailEl.textContent = isRandomized ? "Order: Randomized" : "Order: Sequential (original)";
+        await playFile(SLUG_FILE, activeRunId);
+
+        // Step 2: Randomize or preserve sequential order based on checkbox
+        const sequence = isRandomized ? shuffleArray(PAIRS) : PAIRS.slice();
+
+        for (let idx = 0; idx < sequence.length; idx++) {
+          const pair = sequence[idx];
+          const itemLabel = `Item ${idx + 1} of ${sequence.length}`;
+
+          // Prompt (even track)
+          statusEl.textContent = `${itemLabel} — Prompt`;
+          detailEl.textContent = "Listen and prepare your response...";
+          await playFile(pair.prompt, activeRunId);
+
+          // Scaled pause after prompt
+          const scaledPromptPauseMs = Math.round(pair.pauseAfterPromptMs * getScale());
+          statusEl.textContent = `${itemLabel} — Your turn`;
+          detailEl.textContent = `Pausing ${(scaledPromptPauseMs / 1000).toFixed(2)}s...`;
+          await sleep(scaledPromptPauseMs, activeRunId);
+
+          // Model response (odd track)
+          statusEl.textContent = `${itemLabel} — Model response`;
+          detailEl.textContent = "Listen to model response...";
+          await playFile(pair.response, activeRunId);
+
+          // Scaled pause after response
+          if (idx < sequence.length - 1) {
+            const scaledRespPauseMs = Math.round(BASE_PAUSE_AFTER_RESPONSE_MS * getScale());
+            statusEl.textContent = `${itemLabel} — Pause`;
+            detailEl.textContent = `Pausing ${(scaledRespPauseMs / 1000).toFixed(2)}s before next prompt...`;
+            await sleep(scaledRespPauseMs, activeRunId);
+          }
+        }
+
+        statusEl.textContent = "Drill complete!";
+        detailEl.textContent = "Adjust settings above or click Start Drill to run again.";
+      } catch (err) {
+        if (err.message !== "cancelled") {
+          statusEl.textContent = "Playback error";
+          detailEl.textContent = err.message;
+        } else {
+          statusEl.textContent = "Stopped";
+          detailEl.textContent = "Playback stopped.";
+        }
+      } finally {
+        if (activeRunId === runId) {
+          startBtn.disabled = false;
+          stopBtn.disabled = true;
+        }
+      }
+    }
+
+    startBtn.addEventListener("click", runDrill);
+    stopBtn.addEventListener("click", stopPlayback);
+  </script>
+</body>
+</html>
